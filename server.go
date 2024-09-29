@@ -31,6 +31,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btcd/database"
+	"github.com/btcsuite/btcd/internal/config"
+	"github.com/btcsuite/btcd/internal/log"
+	"github.com/btcsuite/btcd/internal/params"
 	"github.com/btcsuite/btcd/mempool"
 	"github.com/btcsuite/btcd/mining"
 	"github.com/btcsuite/btcd/mining/cpuminer"
@@ -360,7 +363,7 @@ func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2) {
 
 		known, err := sp.PushAddrV2Msg(addrs)
 		if err != nil {
-			peerLog.Errorf("Can't push addrv2 message to %s: %v",
+			log.PeerLog.Errorf("Can't push addrv2 message to %s: %v",
 				sp.Peer, err)
 			sp.Disconnect()
 			return
@@ -1432,14 +1435,14 @@ func (sp *serverPeer) OnNotFound(p *peer.Peer, msg *wire.MsgNotFound) {
 		}
 	}
 	if numBlocks > 0 {
-		blockStr := pickNoun(uint64(numBlocks), "block", "blocks")
+		blockStr := log.PickNoun(uint64(numBlocks), "block", "blocks")
 		reason := fmt.Sprintf("%d %v not found", numBlocks, blockStr)
 		if sp.addBanScore(20*numBlocks, 0, reason) {
 			return
 		}
 	}
 	if numTxns > 0 {
-		txStr := pickNoun(uint64(numTxns), "transaction", "transactions")
+		txStr := log.PickNoun(uint64(numTxns), "transaction", "transactions")
 		reason := fmt.Sprintf("%d %v not found", numTxns, txStr)
 		if sp.addBanScore(0, 10*numTxns, reason) {
 			return
@@ -1859,7 +1862,7 @@ func (s *server) handleBanPeerMsg(state *peerState, sp *serverPeer) {
 		srvrLog.Debugf("can't split ban peer %s %v", sp.Addr(), err)
 		return
 	}
-	direction := directionString(sp.Inbound())
+	direction := log.DirectionString(sp.Inbound())
 	srvrLog.Infof("Banned peer %s (%s) for %v", host, direction,
 		cfg.BanDuration)
 	state.banned[host] = time.Now().Add(cfg.BanDuration)
@@ -2218,7 +2221,7 @@ func (s *server) peerDoneHandler(sp *serverPeer) {
 		numEvicted := s.txMemPool.RemoveOrphansByTag(mempool.Tag(sp.ID()))
 		if numEvicted > 0 {
 			txmpLog.Debugf("Evicted %d %s from peer %v (id %d)",
-				numEvicted, pickNoun(numEvicted, "orphan",
+				numEvicted, log.PickNoun(numEvicted, "orphan",
 					"orphans"), sp, sp.ID())
 		}
 	}
@@ -2249,8 +2252,8 @@ func (s *server) peerHandler() {
 
 	if !cfg.DisableDNSSeed {
 		// Add peers discovered through DNS to the address manager.
-		connmgr.SeedFromDNS(activeNetParams.Params, defaultRequiredServices,
-			btcdLookup, func(addrs []*wire.NetAddressV2) {
+		connmgr.SeedFromDNS(params.ActiveNetParams.Params, defaultRequiredServices,
+			cfg.Lookup, func(addrs []*wire.NetAddressV2) {
 				// Bitcoind uses a lookup of the dns seeder here. This
 				// is rather strange since the values looked up by the
 				// DNS seed lookups will vary quite a lot.
@@ -2617,7 +2620,7 @@ func (s *server) upnpUpdateThread() {
 	// Go off immediately to prevent code duplication, thereafter we renew
 	// lease every 15 minutes.
 	timer := time.NewTimer(0 * time.Second)
-	lport, _ := strconv.ParseInt(activeNetParams.DefaultPort, 10, 16)
+	lport, _ := strconv.ParseInt(params.ActiveNetParams.DefaultPort, 10, 16)
 	first := true
 out:
 	for {
@@ -2734,7 +2737,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		services &^= wire.SFNodeNetwork
 	}
 
-	amgr := addrmgr.New(cfg.DataDir, btcdLookup)
+	amgr := addrmgr.New(cfg.DataDir, cfg.Lookup)
 
 	var listeners []net.Listener
 	var nat NAT
@@ -2820,7 +2823,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	// Merge given checkpoints with the default ones unless they are disabled.
 	var checkpoints []chaincfg.Checkpoint
 	if !cfg.DisableCheckpoints {
-		checkpoints = mergeCheckpoints(s.chainParams.Checkpoints, cfg.addCheckpoints)
+		checkpoints = mergeCheckpoints(s.chainParams.Checkpoints, cfg.AddCheckpoints)
 	}
 
 	// Create a new block chain instance with the appropriate configuration.
@@ -2877,9 +2880,9 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 			AcceptNonStd:         cfg.RelayNonStd,
 			FreeTxRelayLimit:     cfg.FreeTxRelayLimit,
 			MaxOrphanTxs:         cfg.MaxOrphanTxs,
-			MaxOrphanTxSize:      defaultMaxOrphanTxSize,
+			MaxOrphanTxSize:      config.DefaultMaxOrphanTxSize,
 			MaxSigOpCostPerTx:    blockchain.MaxBlockSigOpsCost / 4,
-			MinRelayTxFee:        cfg.minRelayTxFee,
+			MinRelayTxFee:        cfg.MinRelayTxFee,
 			MaxTxVersion:         2,
 			RejectReplacement:    cfg.RejectReplacement,
 		},
@@ -2922,7 +2925,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		BlockMinSize:      cfg.BlockMinSize,
 		BlockMaxSize:      cfg.BlockMaxSize,
 		BlockPrioritySize: cfg.BlockPrioritySize,
-		TxMinFreeFee:      cfg.minRelayTxFee,
+		TxMinFreeFee:      cfg.MinRelayTxFee,
 	}
 	blockTemplateGenerator := mining.NewBlkTmplGenerator(&policy,
 		s.chainParams, s.txMemPool, s.chain, s.timeSource,
@@ -2930,7 +2933,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	s.cpuMiner = cpuminer.New(&cpuminer.Config{
 		ChainParams:            chainParams,
 		BlockTemplateGenerator: blockTemplateGenerator,
-		MiningAddrs:            cfg.miningAddrs,
+		MiningAddrs:            cfg.MiningAddrs,
 		ProcessBlock:           s.syncManager.ProcessBlock,
 		ConnectedCount:         s.ConnectedCount,
 		IsCurrent:              s.syncManager.IsCurrent,
@@ -2970,7 +2973,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 
 				// allow nondefault ports after 50 failed tries.
 				if tries < 50 && fmt.Sprintf("%d", addr.NetAddress().Port) !=
-					activeNetParams.DefaultPort {
+					params.ActiveNetParams.DefaultPort {
 					continue
 				}
 
@@ -2995,7 +2998,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		OnAccept:       s.inboundPeerConnected,
 		RetryDuration:  connectionRetryInterval,
 		TargetOutbound: uint32(targetOutbound),
-		Dial:           btcdDial,
+		Dial:           cfg.Dial,
 		OnConnection:   s.outboundPeerConnected,
 		GetNewAddress:  newAddressFunc,
 	})
@@ -3085,10 +3088,10 @@ func initListeners(amgr *addrmgr.AddrManager, listenAddrs []string, services wir
 
 	var nat NAT
 	if len(cfg.ExternalIPs) != 0 {
-		defaultPort, err := strconv.ParseUint(activeNetParams.DefaultPort, 10, 16)
+		defaultPort, err := strconv.ParseUint(params.ActiveNetParams.DefaultPort, 10, 16)
 		if err != nil {
 			srvrLog.Errorf("Can not parse default port %s for active chain: %v",
-				activeNetParams.DefaultPort, err)
+				params.ActiveNetParams.DefaultPort, err)
 			return nil, nil, err
 		}
 
@@ -3175,7 +3178,7 @@ func addrStringToNetAddr(addr string) (net.Addr, error) {
 	}
 
 	// Attempt to look up an IP address associated with the parsed host.
-	ips, err := btcdLookup(host)
+	ips, err := cfg.Lookup(host)
 	if err != nil {
 		return nil, err
 	}
@@ -3262,7 +3265,7 @@ func dynamicTickDuration(remaining time.Duration) time.Duration {
 // isWhitelisted returns whether the IP address is included in the whitelisted
 // networks and IPs.
 func isWhitelisted(addr net.Addr) bool {
-	if len(cfg.whitelists) == 0 {
+	if len(cfg.Whitelists) == 0 {
 		return false
 	}
 
@@ -3277,7 +3280,7 @@ func isWhitelisted(addr net.Addr) bool {
 		return false
 	}
 
-	for _, ipnet := range cfg.whitelists {
+	for _, ipnet := range cfg.Whitelists {
 		if ipnet.Contains(ip) {
 			return true
 		}
