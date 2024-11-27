@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -81,6 +83,8 @@ type ControllerConfig struct {
 	Stderr io.Writer
 	Stdout io.Writer
 
+	Build bool
+
 	*Config
 }
 
@@ -147,6 +151,36 @@ func (c *Controller) RPCConnConfig() (*rpcclient.ConnConfig, error) {
 
 // Start btcd and wait for the RPC to be ready.
 func (c *Controller) Start() error {
+	name := "btcd"
+
+	if c.cfg.Build {
+		// Derive the path of the current file.
+		_, file, _, _ := runtime.Caller(0)
+
+		// Derive the working directory, which is just beneath the file.
+		wd := filepath.Join(filepath.Dir(file), "..")
+
+		// Create a new temporary directory to store btcd.
+		tmp, err := os.MkdirTemp("", "")
+		if err != nil {
+			return err
+		}
+
+		// Set the new executable name.
+		name = filepath.Join(tmp, "btcd")
+
+		// Build btcd.
+		cmd := exec.Command("go", "build", "-o", name)
+
+		// Set the working directory to the btcd source directory.
+		cmd.Dir = wd
+
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	var args []string
 
 	// First, we convert the `Config` type into flags.
@@ -258,7 +292,7 @@ func (c *Controller) Start() error {
 	}
 
 	// Create the command.
-	c.cmd = exec.Command("btcd", args...)
+	c.cmd = exec.Command(name, args...)
 
 	// Create a pipe of stdout.
 	pr, pw, err := os.Pipe()
